@@ -24,6 +24,14 @@ httpx.Response.json = custom_json
 
 class Request:
 
+    # Logged-out routes that, unlike the new "x-web" root shell, still serve the legacy
+    # "responsive-web/client-web" bundle referencing ondemand.s (the transaction-id indices
+    # source). Tried in order when the primary home fetch returns the new shell.
+    HOME_PAGE_ONDEMAND_FALLBACK_URLS = [
+        "https://x.com/i/flow/login",
+        "https://x.com/home",
+    ]
+
     def __init__(self, client, max_retries=3, proxy=None, captcha_solver=None, **kwargs):
 
         timeout = kwargs.pop("timeout", 60)
@@ -303,6 +311,21 @@ class Request:
                 request_payload = {input_field.get("name"): input_field.get("value") for input_field in migration_form.select("input")}
                 response = await self._session.request(method=method, url=url, data=request_payload, headers=headers)
                 home_page = bs4.BeautifulSoup(response.content, 'lxml')
+
+            # X migrated the logged-out root shell ("/" and "/?mx=2") to a new "x-web" Vite
+            # build that no longer references the ondemand.s JS file the transaction-id
+            # generator reads its key-byte indices from. The legacy "responsive-web/client-web"
+            # bundle (which still ships ondemand.s) is, as of 2026-06, still served on the
+            # logged-out login/timeline routes. So if the page we got back is the new shell
+            # (no resolvable ondemand URL), re-fetch a legacy-bundle route to recover the
+            # indices source. See X_WEB_TRANSACTION_ID_BREAK.md.
+            if TransactionGenerator.get_on_demand_url(str(home_page)) is None:
+                for fallback_url in self.HOME_PAGE_ONDEMAND_FALLBACK_URLS:
+                    fallback_response = await self._session.request(method="GET", url=fallback_url, headers=headers)
+                    fallback_page = bs4.BeautifulSoup(fallback_response.content, 'lxml')
+                    if TransactionGenerator.get_on_demand_url(str(fallback_page)) is not None:
+                        home_page = fallback_page
+                        break
         except Exception as twitter_home_error:
             raise ValueError(f"Unable to get Twitter Home Page : {str(twitter_home_error)}")
         return home_page
