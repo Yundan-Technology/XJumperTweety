@@ -6,6 +6,28 @@ from . import utils
 from .types import HOME_TIMELINE_TYPE_FOR_YOU
 
 
+# X Articles (long-form, Premium accounts). Operation ids and feature switches are the ones
+# x.com's Article editor sends (bundle.TwitterArticles, 2026-10-31). Module level because
+# UrlBuilder wraps every method into a request dict.
+ARTICLE_FEATURES = {
+    "profile_label_improvements_pcf_label_in_post_enabled": True,
+    "responsive_web_profile_redirect_enabled": False,
+    "rweb_tipjar_consumption_enabled": True,
+    "verified_phone_label_enabled": False,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+}
+ARTICLE_FIELD_TOGGLES = {"withPayments": False, "withDmBlocks": False, "withAuxiliaryUserLabels": False}
+
+
+def _article_payload(url, variables, features=True):
+    return {
+        "variables": variables,
+        "features": dict(ARTICLE_FEATURES) if features else {},
+        "fieldToggles": dict(ARTICLE_FIELD_TOGGLES) if features else {},
+        "queryId": url.split("/")[-2],
+    }
+
+
 @utils.DictRequestData
 class UrlBuilder:
     URL_GUEST_TOKEN = "https://api.x.com/1.1/guest/activate.json"
@@ -50,6 +72,14 @@ class UrlBuilder:
     URL_AUSER_CREATE_TWEET = "https://x.com/i/api/graphql/znq7jUAqRjmPj7IszLem5Q/CreateTweet"  # noqa
     URL_AUSER_CREATE_NOTE_TWEET = "https://x.com/i/api/graphql/tpdAMySdKScjio4NcCChLg/CreateNoteTweet"  # noqa
     URL_AUSER_DELETE_TWEET = "https://x.com/i/api/graphql/VaenaVgh5q5ih7kvyVjgtg/DeleteTweet"  # noqa
+    URL_AUSER_ARTICLE_DRAFT_CREATE = "https://x.com/i/api/graphql/fCkdrI6zrnw_UtVa3WDHhw/ArticleEntityDraftCreate"  # noqa
+    URL_AUSER_ARTICLE_UPDATE_CONTENT = "https://x.com/i/api/graphql/FMC9CKP145f5wgXYCsmtiA/ArticleEntityUpdateContent"  # noqa
+    URL_AUSER_ARTICLE_UPDATE_TITLE = "https://x.com/i/api/graphql/wTWiDSxOe1ZsImjXyuoiYw/ArticleEntityUpdateTitle"  # noqa
+    URL_AUSER_ARTICLE_UPDATE_COVER = "https://x.com/i/api/graphql/Rlvhkuecg1z_7O5vC2G1fQ/ArticleEntityUpdateCoverMedia"  # noqa
+    URL_AUSER_ARTICLE_PUBLISH = "https://x.com/i/api/graphql/86zqyWZeIoccSyBxmxcd6w/ArticleEntityPublish"  # noqa
+    URL_AUSER_ARTICLE_UNPUBLISH = "https://x.com/i/api/graphql/hRtkxfQu7M6mnlP1FRcGgg/ArticleEntityUnpublish"  # noqa
+    URL_AUSER_ARTICLE_DELETE = "https://x.com/i/api/graphql/e4lWqB6m2TA8Fn_j9L9xEA/ArticleEntityDelete"  # noqa
+    URL_AUSER_ARTICLE_BY_ID = "https://x.com/i/api/graphql/eUiP53I_YemhBOI2TMCI3A/ArticleEntityResultByRestId"  # noqa
     URL_AUSER_CREATE_POOL = "https://caps.x.com/v2/cards/create.json"  # noqa
     URL_AUSER_VOTE_POOL = "https://caps.x.com/v2/capi/passthrough/1"  # noqa
     URL_AUSER_CREATE_TWEET_SCHEDULE = "https://x.com/i/api/graphql/LCVzRQGxOaGnOnYH01NQXg/CreateScheduledTweet"  # noqa
@@ -1074,6 +1104,40 @@ class UrlBuilder:
         }
 
         return "POST", self.URL_AUSER_DELETE_TWEET, None, json_data
+
+    def article_draft_create(self, title, content_state):
+        return "POST", self.URL_AUSER_ARTICLE_DRAFT_CREATE, None, _article_payload(self.URL_AUSER_ARTICLE_DRAFT_CREATE, {"content_state": content_state, "title": title})
+
+    def article_update_content(self, article_id, content_state):
+        return "POST", self.URL_AUSER_ARTICLE_UPDATE_CONTENT, None, _article_payload(self.URL_AUSER_ARTICLE_UPDATE_CONTENT, {"content_state": content_state, "article_entity": str(article_id)})
+
+    def article_update_title(self, article_id, title):
+        return "POST", self.URL_AUSER_ARTICLE_UPDATE_TITLE, None, _article_payload(self.URL_AUSER_ARTICLE_UPDATE_TITLE, {"articleEntityId": str(article_id), "title": title})
+
+    def article_update_cover(self, article_id, media_id, media_category="DraftTweetImage"):
+        variables = {"articleEntityId": str(article_id)}
+        if media_id:
+            variables["coverMedia"] = {"media_id": str(media_id), "media_category": media_category}
+        return "POST", self.URL_AUSER_ARTICLE_UPDATE_COVER, None, _article_payload(self.URL_AUSER_ARTICLE_UPDATE_COVER, variables)
+
+    def article_publish(self, article_id, tweet_text=None, conversation_control=None):
+        variables = {"articleEntityId": str(article_id)}
+        if tweet_text:
+            variables["tweetText"] = tweet_text
+        if conversation_control:
+            variables["conversationControl"] = {"mode": conversation_control}
+        return "POST", self.URL_AUSER_ARTICLE_PUBLISH, None, _article_payload(self.URL_AUSER_ARTICLE_PUBLISH, variables)
+
+    def article_unpublish(self, article_id):
+        return "POST", self.URL_AUSER_ARTICLE_UNPUBLISH, None, _article_payload(self.URL_AUSER_ARTICLE_UNPUBLISH, {"articleEntityId": str(article_id)})
+
+    def article_delete(self, article_id):
+        return "POST", self.URL_AUSER_ARTICLE_DELETE, None, _article_payload(self.URL_AUSER_ARTICLE_DELETE, {"articleEntityId": str(article_id)}, features=False)
+
+    def article_by_id(self, article_id):
+        json_data = _article_payload(self.URL_AUSER_ARTICLE_BY_ID, {"articleEntityId": str(article_id)})
+        params = {k: json.dumps(v) for k, v in json_data.items() if k != "queryId"}
+        return "GET", self.URL_AUSER_ARTICLE_BY_ID, params
 
     def create_tweet(
             self,
