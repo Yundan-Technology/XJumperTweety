@@ -114,16 +114,22 @@ class AuthMethods:
         await self.session.save_session(self.cookies, None)
         return await self.connect()
 
+    # x.com hands out ct0 to an auth_token session directly; business.x.com sits behind a
+    # Cloudflare challenge since 2026-10 and is only kept as a fallback.
+    AUTH_TOKEN_CT0_URLS = ("https://x.com/", "https://business.x.com/en")
+
     async def load_auth_token(self, auth_token):
-        URL = "https://business.x.com/en"
         temp_cookie = {"auth_token": auth_token}
         temp_headers = {'authorization': constants.DEFAULT_BEARER_TOKEN}
-        res = await self.request.session.get(URL, cookies=temp_cookie)
-        ct0 = res.cookies.get('ct0')
-
-        if not ct0:
-            res = await self.request.session.get(URL, cookies=temp_cookie, headers=temp_headers)
+        res, ct0 = None, None
+        for URL in self.AUTH_TOKEN_CT0_URLS:
+            res = await self.request.session.get(URL, cookies=temp_cookie)
             ct0 = res.cookies.get('ct0')
+            if not ct0:
+                res = await self.request.session.get(URL, cookies=temp_cookie, headers=temp_headers)
+                ct0 = res.cookies.get('ct0')
+            if ct0:
+                break
 
         if not ct0:
             raise DeniedLogin(response=res, message="Auth Token isn't Valid")

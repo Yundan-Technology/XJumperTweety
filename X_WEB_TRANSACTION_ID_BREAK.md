@@ -149,3 +149,14 @@ The library is exercised live in the `qinglong` Docker container on the prod ser
 
 - The ScheduledJobs viral pipeline calls this lib via `X/viral_scheduler.py::init_tweety()`. While X is down, that repo is posting to **Bluesky only** (Bluesky doesn't use tweety).
 - There's also a coupling bug in `ScheduledJobs/X/viral_scheduler.py::run()` — it inits tweety (X) *before* enqueuing Bluesky, so a tweety failure also skips Bluesky. That's a separate fix tracked on the ScheduledJobs side; it does **not** affect the tweety fix here.
+
+---
+
+## 7. 2026-10-31 follow-up: no logged-out route has ondemand.s any more
+
+Symptom again: `Couldn't get animation key indices`, plus `load_auth_token` raising `DeniedLogin("Auth Token isn't Valid")` for a perfectly good token.
+
+- `/?mx=2`, `/i/flow/login`, `/home` (logged out redirects to `/i/jf/onboarding/web`), `/explore`, profile pages: none of them reference `"ondemand.s"` now. The logged-in `/home` (with `auth_token` cookie) still ships the legacy bundle with the `ondemand.s` chunk hash, `twitter-site-verification` and the four `loading-x-anim` frames, and the indices regex still matches its JS.
+- Fix: `_init_local_api` passes the session cookies it just removed to `get_home_html(cookies=...)`, which, after the logged-out routes fail, fetches `https://x.com/home` with them. Logged-out callers are unchanged.
+- `business.x.com/en`, where `load_auth_token` got `ct0`, now serves a Cloudflare "Just a moment..." challenge (from residential and datacenter IPs alike). `https://x.com/` sets `ct0` for an `auth_token` session, so it is tried first; business.x.com stays as a fallback.
+- Verified live: `load_auth_token` on a real token returns the right user; tests in `tests/test_home_ondemand_fallback.py` and `tests/test_load_auth_token.py`.

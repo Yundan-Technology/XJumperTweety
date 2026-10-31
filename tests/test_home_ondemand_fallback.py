@@ -85,3 +85,42 @@ async def test_no_fallback_when_primary_already_has_ondemand():
     assert TransactionGenerator.get_on_demand_url(str(home_page)) is not None
     # Only the primary URL was fetched; no fallback route was hit.
     assert calls == ["https://x.com/?mx=2"]
+
+
+@pytest.mark.asyncio
+async def test_logged_in_home_is_the_last_resort_when_no_logged_out_route_has_ondemand():
+    """2026-10: every logged-out route serves the x-web shell; only the logged-in /home
+    still references ondemand.s. With session cookies, get_home_html must use it."""
+    request = _make_request()
+    calls = []
+
+    async def fake_request(method, url, **kwargs):
+        calls.append((url, bool(kwargs.get("cookies"))))
+        if url == "https://x.com/home" and kwargs.get("cookies"):
+            return _make_response(LEGACY_BUNDLE_HTML)
+        return _make_response(XWEB_SHELL_HTML)
+
+    request._session.request = AsyncMock(side_effect=fake_request)
+
+    home_page = await request.get_home_html(cookies={"auth_token": "a", "ct0": "b"})
+
+    from tweety.transaction import TransactionGenerator
+    assert TransactionGenerator.get_on_demand_url(str(home_page)) is not None
+    assert calls[-1] == ("https://x.com/home", True)
+    # logged-out routes are still tried first, without cookies
+    assert all(not authed for _, authed in calls[:-1])
+
+
+@pytest.mark.asyncio
+async def test_no_cookie_fetch_without_a_session():
+    """Logged-out callers never send cookies and keep the old behaviour."""
+    request = _make_request()
+    seen = []
+
+    async def fake_request(method, url, **kwargs):
+        seen.append(kwargs.get("cookies"))
+        return _make_response(XWEB_SHELL_HTML)
+
+    request._session.request = AsyncMock(side_effect=fake_request)
+    await request.get_home_html()
+    assert not any(seen)

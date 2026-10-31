@@ -180,7 +180,9 @@ class Request:
     async def _init_local_api(self):
         cookies = await self.remove_cookies()
         if not self._transaction:
-            home_page_html = await self.get_home_html()
+            # cookies: X stopped shipping ondemand.s on logged-out pages (2026-10); the
+            # logged-in /home still has it, so get_home_html uses them as a last resort.
+            home_page_html = await self.get_home_html(cookies=cookies)
             # Fetch ondemand.s JS file via the async session (uses proxy/HTTP2 settings)
             on_demand_file_text = None
             html_soup = bs4.BeautifulSoup(home_page_html.content, 'lxml') if isinstance(home_page_html, httpx.Response) else home_page_html
@@ -285,7 +287,7 @@ class Request:
             token = self._captcha_solver.unlock(constants.GENERAL_SITE_KEY, websiteUrl, blob_data)
         return token
 
-    async def get_home_html(self):
+    async def get_home_html(self, cookies=None):
         home_page = None
         headers = self._get_request_headers()
         if headers.get("authorization"):
@@ -326,6 +328,19 @@ class Request:
                     if TransactionGenerator.get_on_demand_url(str(fallback_page)) is not None:
                         home_page = fallback_page
                         break
+
+            # As of 2026-10 no logged-out route references ondemand.s any more (they all
+            # serve the x-web shell or redirect /home to the onboarding flow). The
+            # logged-in /home still ships the legacy bundle with ondemand.s, the
+            # twitter-site-verification key and the loading-x-anim frames, so when we
+            # hold an authenticated session, fetch it with the session cookies.
+            # See X_WEB_TRANSACTION_ID_BREAK.md.
+            if TransactionGenerator.get_on_demand_url(str(home_page)) is None and cookies:
+                authed_response = await self._session.request(method="GET", url="https://x.com/home",
+                                                              headers=headers, cookies=dict(cookies))
+                authed_page = bs4.BeautifulSoup(authed_response.content, 'lxml')
+                if TransactionGenerator.get_on_demand_url(str(authed_page)) is not None:
+                    home_page = authed_page
         except Exception as twitter_home_error:
             raise ValueError(f"Unable to get Twitter Home Page : {str(twitter_home_error)}")
         return home_page
