@@ -673,6 +673,91 @@ class UserMethods:
         tweet_inner['__typename'] = "Tweet"
         return Tweet(self, response, response)
 
+    async def _article_call(self, name, *args, **kwargs):
+        response = await self.http.article_request(name, *args, **kwargs)
+        errors = response.get("errors", []) if isinstance(response, dict) else []
+        if errors:
+            error = errors[0]
+            raise ValueError(f"Article {name} failed: [{error.get('code', 'unknown')}] {error.get('message', 'Unknown error')}")
+        return response.get("data", {}) if isinstance(response, dict) else {}
+
+    async def create_article_draft(self, title: str, content_state: dict) -> str:
+        """
+        Create a private X Article draft (Premium accounts only)
+
+        :param title: (`str`) Article title
+        :param content_state: (`dict`) Draft.js raw content, see ``tweety.article_content.markdown_to_content_state``
+        :return: `str` article entity id
+        """
+        data = await self._article_call("article_draft_create", title, content_state)
+        result = (data.get("articleentity_create_draft") or {}).get("article_entity_results", {}).get("result") or {}
+        article_id = result.get("rest_id")
+        if not article_id:
+            raise ValueError(f"Article draft creation returned no id: {data}")
+        return str(article_id)
+
+    async def update_article_content(self, article_id, content_state: dict):
+        return await self._article_call("article_update_content", article_id, content_state)
+
+    async def update_article_title(self, article_id, title: str):
+        return await self._article_call("article_update_title", article_id, title)
+
+    async def set_article_cover(self, article_id, file: Union[str, UploadedMedia] = None):
+        """Upload ``file`` (path or UploadedMedia) and make it the Article cover; ``None`` clears it."""
+        media_id = None
+        if file is not None:
+            media_id = (await self._upload_media([file]))[0].media_id
+        return await self._article_call("article_update_cover", article_id, media_id)
+
+    async def publish_article(self, article_id, tweet_text: str = None, conversation_control: str = None) -> dict:
+        """
+        Publish an Article draft. X posts it from the account as a Tweet.
+
+        :return: `dict` with ``article_id``, ``tweet_id`` (when X returns it) and the raw ``result``
+        """
+        data = await self._article_call("article_publish", article_id, tweet_text, conversation_control)
+        result = (data.get("articleentity_publish") or {}).get("article_entity_results", {}).get("result")
+        if not result:
+            raise ValueError(f"Article publish returned no result: {data}")
+        tweet_id = None
+        for key in ("tweet_results", "published_tweet_results"):
+            found = find_objects(result, key, None, none_value=None)
+            found = found[0] if isinstance(found, list) and found else found
+            if isinstance(found, dict):
+                tweet_id = (found.get("result") or {}).get("rest_id") or tweet_id
+        if not tweet_id:
+            tweet_id = (result.get("metadata") or {}).get("tweet_id") or result.get("tweet_id")
+        return {"article_id": str(result.get("rest_id") or article_id), "tweet_id": str(tweet_id) if tweet_id else None,
+                "result": result}
+
+    async def get_article(self, article_id) -> dict:
+        data = await self._article_call("article_by_id", article_id)
+        return (data.get("article_result_by_rest_id") or {}).get("result") or {}
+
+    async def unpublish_article(self, article_id):
+        return await self._article_call("article_unpublish", article_id)
+
+    async def delete_article(self, article_id):
+        return await self._article_call("article_delete", article_id)
+
+    async def create_article(self, title: str, content_state: dict, cover: Union[str, UploadedMedia] = None,
+                             tweet_text: str = None, publish: bool = True, on_draft=None) -> dict:
+        """
+        Draft, optionally add a cover, then publish an X Article.
+
+        :param on_draft: called with the draft id right after it exists, so callers can persist it
+            before anything else can fail (a retry should reuse or delete that draft, not make a second one)
+        :return: `dict` with ``article_id`` and, when published, ``tweet_id``
+        """
+        article_id = await self.create_article_draft(title, content_state)
+        if on_draft:
+            on_draft(article_id)
+        if cover is not None:
+            await self.set_article_cover(article_id, cover)
+        if not publish:
+            return {"article_id": article_id, "tweet_id": None, "result": None}
+        return await self.publish_article(article_id, tweet_text)
+
     async def schedule_tweet(
             self,
             date: datetime.datetime,

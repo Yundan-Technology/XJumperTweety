@@ -604,6 +604,11 @@ class Request:
         response = await self.__get_response__(**request_data)
         return response
 
+    async def article_request(self, name, *args, **kwargs):
+        request_data = getattr(self._builder, name)(*args, **kwargs)
+        response = await self.__get_response__(**request_data)
+        return response
+
     async def create_tweet(self, text, files, filter_, reply_to, quote_tweet_url, pool, geo, batch_composed, community_id, post_on_timeline):
         if pool:
             response = await self.create_pool(pool)
